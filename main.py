@@ -7,6 +7,7 @@ from streamlit_option_menu import option_menu
 import plotly.express as px
 import pandasql as ps
 
+
 st.set_page_config(layout='wide')
 
 df = pd.read_csv('streamlit_app\data\superstore.csv')
@@ -19,18 +20,19 @@ with st.sidebar:
     selected_year = st.selectbox("Select Year", sorted(df['order_year'].unique(), reverse=True), index=0)
     selected = option_menu(
     menu_title = "Main Menu",
-    options = ["Home","Geography Insight","Customer Segmentation","Product Analysis","Query Optimization and Processing","Contact Us"],
-    icons = ["house","geo-alt","person-circle",'bi-archive',"snowflake","envelope"],
+    options = ["Home","Geography Insight","Customer Segmentation","Product Analysis","Predictive Analysis","Contact Us"],
+    icons = ["house","geo-alt","person-circle",'bi-archive',"bi-bar-chart-fill","envelope"],
     menu_icon = "cast",
     default_index = 0
     
     )
 
-
 CURR_YEAR = selected_year
 PREV_YEAR = CURR_YEAR - 1
 
-if selected == "Home":
+if selected == "Home" and selected_year < 2015:
+    st.warning("Halaman Home hanya dapat memfilter minimal tahun 2015")
+else:
     st.title("Tokopaedi Dashboard")
 
     # 1 periksa tahun terakhir dari data
@@ -512,3 +514,79 @@ if selected == "Product Analysis":
                                 color_discrete_map=color_discrete_map )  # Replace 'region' with the actual column you want to use for color
     fig_top10prod.update_layout(width=800, height=650, title_x=0.5)
     st.plotly_chart(fig_top10prod, use_container_width=True)
+
+    # pivot_table = pd.pivot_table(
+    # filtered_df,
+    # index=['subcategory', 'product_name'],
+    # aggfunc={'sales': 'sum', 'profit': 'sum', 'product_id': df['product_id'].value_counts()}
+    # ).reset_index()
+
+
+    product_df = filtered_df.groupby(['subcategory', 'product_name']).agg({'sales': 'sum'}).round(2).reset_index()
+
+    # Calculate the 'Amount' column per product_name within each category
+    product_df['Amount'] = df.groupby(['subcategory', 'product_name'])['product_name'].transform('count')
+
+    # Calculate the 'Price' column
+    product_df['Price'] = round(product_df['sales'] / product_df['Amount'], 2)
+
+    # Pivot the DataFrame
+    pivot_table = pd.pivot_table(product_df, values=['sales', 'Amount', 'Price'], index=['subcategory', 'product_name'])
+
+    top_10_sales = (
+    product_df.groupby('subcategory', group_keys=False)
+    .apply(lambda x: x.nlargest(3, 'sales'))
+    .reset_index(drop=True)
+    )
+
+    
+    st.subheader("Top 3 Orders Sales Product per SubCategory Pivot Table")
+    subcategory_colors = {
+    'Bookcases': '#ff7f00',
+    'Chairs': '#ffff33',
+    'Labels': 'lightcoral',
+    'Tables': '#ffd16a',
+    'Storage': '#984ea3',
+    'Furnishings': '#0e1117',
+    'Art': 'lightgoldenrodyellow',
+    'Phones': '#4daf4a',
+    'Binders': '#984ea3',
+    'Appliances': '#377eb8',
+    'Paper': 'lightpink',
+    'Accessories': '#e41a2c',
+    'Envelopes': 'lightseagreen',
+    'Fasteners': 'lightcyan',
+    'Supplies': 'lightsteelblue',
+    'Machines': '#e41a1c',
+    'Copiers': '#a65628'
+    }
+
+    def row_style(row, subcategory_colors):
+        subcategory = row['subcategory']
+        color = subcategory_colors.get(subcategory, '')
+
+        # Style headers with black color
+        if isinstance(row.name, tuple) and row.name[0] == '':  # Header cell
+            return [
+                f'background-color: {color}; font-weight: bold; color: black'
+            ] * len(row)
+        else:  # Value cell
+            if subcategory == 'Furnishings':  # Special styling for 'Furnishings'
+                return [
+                    f'background-color: {color}; color: white'  # Yellow background for 'Furnishings'
+                ] * len(row)
+            else:
+                return [
+                    f'background-color: {color}; color: black'
+                ] * len(row)
+
+    # Assuming you have your `top_10_sales` DataFrame ready
+
+    styled_pivot_table = top_10_sales.style.apply(
+        lambda row: row_style(row, subcategory_colors), axis=1
+    )
+    container = st.container()
+
+    # Atur margin container untuk memusatkan tabel
+    with container:
+        st.dataframe(styled_pivot_table, width=1000, height=1000)
