@@ -1,20 +1,28 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import altair as alt
-import streamlit_option_menu
+import plotly.graph_objects as go
 from streamlit_option_menu import option_menu
 # from numerize import numerize
 import plotly.express as px
 import pandasql as ps
-
+import geopandas as gpd
+import json
 
 st.set_page_config(layout='wide')
 
 df = pd.read_csv('streamlit_app\data\superstore.csv')
 
-df['order_date'] = pd.to_datetime(df['order_date'])
+with open("gz_2010_us_040_00_20m.json") as response:
+    geo = json.load(response)
+
+
+df['order_date'] = pd.to_datetime(df['order_date'], format='%Y-%m-%d')
 df['ship_date'] = pd.to_datetime(df['ship_date'])
 df['order_year'] = df['order_date'].dt.year
+df['days to ship'] = abs(df['ship_date']- df['order_date']).dt.days
+
 
 with st.sidebar:
     selected_year = st.selectbox("Select Year", sorted(df['order_year'].unique(), reverse=True), index=0)
@@ -34,7 +42,7 @@ if selected == "Home" and selected_year < 2015:
     st.warning("Halaman Home hanya dapat memfilter minimal tahun 2015")
 else:
     st.title("Tokopaedi Dashboard")
-
+if selected == "Home":
     # 1 periksa tahun terakhir dari data
     # itung total sales, banyaknya order, banyaknya kosumen, profit %
     # di tahun tersebut
@@ -52,7 +60,7 @@ else:
 
     data['profit_pct'] = 100.0 * data['profit'] / data['sales']
 
-    mx_sales, mx_order, mx_customer, mx_profit_pct = st.columns(4)
+    mx_sales, mx_order, mx_customer, mx_profit_pct, gauge_shipping = st.columns(5)
 
     def format_big_number(num):
         if num >= 1e6:
@@ -85,7 +93,7 @@ else:
 
         order_diff_pct = 100.0 * (curr_cust - prev_cust) / prev_cust
 
-        st.metric("Customer_id", value=(curr_cust), delta=f'{order_diff_pct:.2f}%')
+        st.metric("Jumlah Customer", value=(curr_cust), delta=f'{order_diff_pct:.2f}%')
 
     with mx_profit_pct:
         curr_profit_pct = data.loc[data['order_year']==CURR_YEAR, 'profit_pct'].values[0]
@@ -95,7 +103,24 @@ else:
         st.metric("profit_pct", value=f'{curr_profit_pct:.2f}%', delta=f'{profit_pct_diff_pct:.2f}%')
 
 
-    freq = st.selectbox("Freq", ['Harian','Mingguan','Quartal','Bulanan'])
+    with gauge_shipping:
+        filtered_df = df[df['order_year'] == selected_year]
+        value =int(np.round(filtered_df['days to ship'].mean()))  # Example value
+
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=value,
+            title={'text': "Average Shipping Days", 'font': {'size': 16}},
+            gauge={'axis': {'range': [filtered_df['days to ship'].min() , filtered_df['days to ship'].max()]},
+                'bar': {'color': "#005C53"},
+                }
+        ))
+
+        fig.update_layout(width=150, height=150, margin=dict(l=10, r=10, b=10, t=4))
+
+        st.plotly_chart(fig)
+
+    freq = st.selectbox("Freq", ['Harian','Mingguan','Bulanan','Quartal'])
 
     timeUnit = {
         'Harian':'yearmonthdate',
@@ -106,23 +131,39 @@ else:
 
     st.header("Sales trend")
     # altair membuat object berupa chart dengan data di dalam parameter
-    sales_line = alt.Chart(df[df['order_year']==CURR_YEAR]).mark_line().encode(
-        alt.X('order_date', title='Order Date', timeUnit=timeUnit[freq]),
-        alt.Y('sales', title='Revenue', aggregate='sum')
+    # Reshape the data
+    df_filter = df.loc[:, ['order_date','order_year', 'sales', 'profit']].reset_index(drop=True)
+    df_merge = pd.melt(df_filter, id_vars=['order_date','order_year'], value_vars=['sales', 'profit'], var_name='metric', value_name='value')
+    df_sales = df_merge.loc[df_merge['metric'] == 'sales']
+    df_profit = df_merge.loc[df_merge['metric'] == 'profit']
+    
+    colors = ['#5276A7','#F18727']
+    base = alt.Chart(df_sales[df_sales['order_year'] == CURR_YEAR]).encode(
+    x=alt.X('order_date:T', title='Order Date', timeUnit=timeUnit[freq]),
+    color=alt.Color('metric', scale=alt.Scale(domain=['sales', 'profit'], range=['#5276A7', '#F18727']), legend=alt.Legend(
+        orient='none',
+        legendX=380, legendY=-5,
+        direction='horizontal',
+        titleAnchor='middle'))
+    )
+    bar_chart_A = base.mark_bar(color='#5276A7').encode(
+        alt.Y('sum(value):Q', axis=alt.Axis(title='Sales', titleColor='#5276A7')),
+        tooltip=[alt.Tooltip('sum(value)')]
     )
 
-    st.altair_chart(sales_line, use_container_width=True)
-
-    st.header("Profit Distribution by Category and Segment")
-    profit_bar = alt.Chart(df[df['order_year'] == CURR_YEAR]).mark_bar().encode(
-    alt.X('order_date', title='Order Date', timeUnit='month'),
-    alt.Y('profit:Q', title='Profit', aggregate='sum'),
-    color=alt.Color('segment:N', title='segment')  # add color parameter here
-    ).facet(
-        column=alt.Column('ship_mode:N', title='Ship Mode')  # add facet parameter here
+    base_1 = alt.Chart(df_profit[df_profit['order_year'] == CURR_YEAR]).encode(
+    x=alt.X('order_date:T', title='Order Date', timeUnit=timeUnit[freq]),
+    
+    )
+    line_chart_B = base_1.mark_line(stroke='#F18727', interpolate='monotone').encode(
+        alt.Y('sum(value):Q', axis=alt.Axis(title='Profit', titleColor='#F18727')),
+        tooltip=[alt.Tooltip('sum(value)', title='Profit')],
     )
 
-    st.altair_chart(profit_bar, use_container_width=True)
+    dual_axis = alt.layer(bar_chart_A, line_chart_B).resolve_scale(y='independent')
+
+    # Assuming st is your Streamlit module
+    st.altair_chart(dual_axis, use_container_width=True)
 
     # Bikin 4 kolom berisi sales dari tiap kategori
     # Setiap kolom mewakili region yang berbeda
@@ -179,7 +220,7 @@ else:
     fig3.update_layout(width= 800, height= 650)
     st.plotly_chart(fig3,use_container_width=True )
 
-if selected == "Geography Insight":
+elif selected == "Geography Insight":
 
     col1 , col2 = st.columns((2)) 
 
@@ -206,18 +247,22 @@ if selected == "Geography Insight":
         st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Sales Distribution by City")
-    freq = st.selectbox("Freq", ['Harian','Mingguan','Quartal','Bulanan'])
-
-    timeUnit = {
-         'Harian':'yearmonthdate',
-        'Mingguan':'yearweek',
-        'Quartal':'yearquarter',
-        'Bulanan':'yearmonth'
-    }
-
+    
     col1 , col2 = st.columns((2)) 
     with col1:
-        filtered_df = df[(df['region'] == 'East') & (df['order_year'] == CURR_YEAR)]
+        freq = st.selectbox("Freq", ['Harian','Mingguan','Bulanan','Quartal'])
+
+        timeUnit = {
+            'Harian':'yearmonthdate',
+            'Mingguan':'binnedyearweek',
+            'Quartal':'yearquarter',
+            'Bulanan':'yearmonth'
+        }
+    with col2:
+        selected_region = st.selectbox("Select Region", df['region'].unique())
+    col1 , col2 = st.columns((2)) 
+    with col1:
+        filtered_df = df[(df['region'] == selected_region) & (df['order_year'] == CURR_YEAR)]
         region_name = filtered_df['region'].iloc[0]
         top_city = filtered_df.groupby('city')['sales'].sum().reset_index()
         top_city['sales'] = top_city['sales'].round(1)
@@ -231,110 +276,91 @@ if selected == "Geography Insight":
         fig_1.update_layout(width=600, height=600,title_x=0.2, title_y=1)
         st.plotly_chart(fig_1, use_container_width=True)
 
+
     with col2:
+        geometries = pd.read_csv('georef-united-states-of-america-zc-point.csv', sep = ";")
+        merged_df = pd.merge(df, geometries, left_on='postal_code', right_on='Zip Code', how='left')
+        merged_df[['latitude', 'longitude']] = merged_df['Geo Point'].str.split(',', expand=True)
+        merged_df['latitude'] = merged_df['latitude'].astype(float)
+        merged_df['longitude'] = merged_df['longitude'].astype(float)
+        merged_df = merged_df[['order_year','region','state','latitude','longitude','profit']]
+        
+        filtered_df = merged_df[(merged_df['region'] == selected_region) & (df['order_year'] == CURR_YEAR)]
+        center_lat = filtered_df['latitude'].mean()
+        center_lon = filtered_df['longitude'].mean()
+        filtered_df = filtered_df.groupby(['order_year',"state",'latitude','longitude']).agg(
+            {"profit": "sum"}
+        )
+        filtered_df.reset_index(inplace=True)
+
+        fig = go.Figure(
+            go.Choroplethmapbox(
+                geojson=geo,
+                locations=filtered_df.state,
+                featureidkey="properties.NAME",
+                z=filtered_df.profit,
+                colorscale="sunsetdark",
+                # zmin=0,
+                # zmax=500000,
+                marker_opacity=0.5,
+                marker_line_width=0,
+            )
+        )
+        fig.update_layout(
+            mapbox_style="carto-positron",
+            mapbox_zoom=3.5,
+            mapbox_center={"lat": center_lat , "lon": center_lon},
+            width=700,
+            height=600,
+        )
+        fig.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
+        st.plotly_chart(fig)
+        
+        
+    filtered_df = df[(df['region'] == selected_region) & (df['order_year'] == CURR_YEAR)]
+    df_filter = filtered_df.loc[:, ['order_date','order_year', 'sales', 'profit']].reset_index(drop=True)
+    df_merge = pd.melt(df_filter, id_vars=['order_date','order_year'], value_vars=['sales', 'profit'], var_name='metric', value_name='value')
+    df_sales = df_merge.loc[df_merge['metric'] == 'sales']
+    df_profit = df_merge.loc[df_merge['metric'] == 'profit']
+        
+    colors = ['#5276A7','#F18727']
+    base = alt.Chart(df_sales[df_sales['order_year'] == CURR_YEAR]).encode(
+    x=alt.X('order_date:T', title='Order Date', timeUnit=timeUnit[freq]),
+    tooltip=['order_date','sum(value)'],
+    color=alt.Color('metric', scale=alt.Scale(domain=['sales', 'profit'], range=['#5276A7', '#F18727']), legend=alt.Legend(
+            orient='none',
+            legendX=100, legendY=-5,
+            direction='horizontal',
+            titleAnchor='middle'))
+        )
+    bar_chart_A = base.mark_bar(color='#5276A7').encode(
+            alt.Y('sum(value):Q', axis=alt.Axis(title='Sales', titleColor='#5276A7')),
+        )
+
+    base_1 = alt.Chart(df_profit[df_profit['order_year'] == CURR_YEAR]).encode(
+        x=alt.X('order_date:T', title='Order Date', timeUnit=timeUnit[freq]),
+         
+        )
+    line_chart_B = base_1.mark_line(stroke='#F18727', interpolate='monotone').encode(
+            alt.Y('sum(value):Q', axis=alt.Axis(title='Profit', titleColor='#F18727')),
+          
+        )
     
-        profit_line = alt.Chart(filtered_df[filtered_df['order_year']==CURR_YEAR]).mark_line().encode(
-        alt.X('order_date', title='order date', timeUnit=timeUnit[freq]),
-        alt.Y('sales', title='Revenue', aggregate='sum')
-        ).properties(
-            width=500,  # Sesuaikan dengan lebar yang diinginkan
-            height=600,
-            title=f'Time Series Region: {region_name} ({CURR_YEAR})'
-        ).configure_title(
-            anchor='middle'
-        )
-        st.altair_chart(profit_line, use_container_width=True)
+    dual_axis = alt.layer(bar_chart_A,line_chart_B).resolve_scale(y='independent')
+        
+    chart_title= f"Sales and Profit Over Time {region_name} ({CURR_YEAR})"
+        # Assuming st is your Streamlit module
+    title_params = alt.TitleParams(
+    text=chart_title,
+    align='center',  # Center-align the title
+    anchor='middle'  # Anchor the title in the middle
+    )
 
-    col1 , col2 = st.columns((2)) 
-
-    with col1:
-        filtered_df = df[(df['region'] == 'South') & (df['order_year'] == CURR_YEAR)]
-        region_name = filtered_df['region'].iloc[0]
-        top_city = filtered_df.groupby('city')['sales'].sum().reset_index()
-        top_city['sales'] = top_city['sales'].round(1)
-        top_city.sort_values(['sales'], ascending=False, inplace=True)
-        top_10_city = top_city.head(10)
-
-        fig_2 = px.bar(top_10_city, y='sales', x='city', title=f'Akumulasi Sales Region :{region_name} ({CURR_YEAR})',
-                            labels={'sales': 'Sales Amount', 'city': 'City'},
-                            text_auto=".2f",
-                            color='city')  # Replace 'region' with the actual column you want to use for color
-        fig_2.update_layout(width=600, height=600, title_x=0.2, title_y=1)
-        st.plotly_chart(fig_2, use_container_width=True)
-    with col2:
-        profit_line = alt.Chart(filtered_df[filtered_df['order_year']==CURR_YEAR]).mark_line().encode(
-        alt.X('order_date', title='order date', timeUnit=timeUnit[freq]),
-        alt.Y('sales', title='Revenue', aggregate='sum')
-        ).properties(
-            width=500,  # Sesuaikan dengan lebar yang diinginkan
-            height=600,
-            title=f'Time Series Region: {region_name} ({CURR_YEAR})'
-        ).configure_title(
-            anchor='middle'
-        )
-        st.altair_chart(profit_line, use_container_width=True)
-
-    col1 , col2 = st.columns((2)) 
-    with col1:
-
-        filtered_df = df[(df['region'] == 'West') & (df['order_year'] == CURR_YEAR)]
-        region_name = filtered_df['region'].iloc[0]
-        top_city = filtered_df.groupby('city')['sales'].sum().reset_index()
-        top_city['sales'] = top_city['sales'].round(1)
-        top_city.sort_values(['sales'], ascending=False, inplace=True)
-        top_10_city = top_city.head(10)
-
-        fig_3 = px.bar(top_10_city, y='sales', x='city', title=f'Akumulasi Sales Region :{region_name} ({CURR_YEAR})',
-                            labels={'sales': 'Sales Amount', 'city': 'City'},
-                            text_auto=".2f",
-                            color='city')  # Replace 'region' with the actual column you want to use for color
-        fig_3.update_layout(width=800, height=650, title_x=0.2, title_y=1)
-        st.plotly_chart(fig_3, use_container_width=True)
-
-    with col2:
-        profit_line = alt.Chart(filtered_df[filtered_df['order_year']==CURR_YEAR]).mark_line().encode(
-        alt.X('order_date', title='order date', timeUnit=timeUnit[freq]),
-        alt.Y('sales', title='Revenue', aggregate='sum')
-        ).properties(
-            width=500,  # Sesuaikan dengan lebar yang diinginkan
-            height=600,
-            title=f'Time Series Region: {region_name} ({CURR_YEAR})'
-        ).configure_title(
-            anchor='middle'
-        )
-        st.altair_chart(profit_line, use_container_width=True)
-
-
-    col1 , col2 = st.columns((2)) 
-    with col1:
-        filtered_df = df[(df['region'] == 'Central') & (df['order_year'] == CURR_YEAR)]
-        region_name = filtered_df['region'].iloc[0]
-        top_city = filtered_df.groupby('city')['sales'].sum().reset_index()
-        top_city['sales'] = top_city['sales'].round(1)
-        top_city.sort_values(['sales'], ascending=False, inplace=True)
-        top_10_city = top_city.head(10)
-
-        fig_4 = px.bar(top_10_city, y='sales', x='city', title=f'Akumulasi Sales Region :{region_name} ({CURR_YEAR})',
-                            labels={'sales': 'Sales Amount', 'city': 'City'},
-                            text_auto=".2f",
-                            color='city')  # Replace 'region' with the actual column you want to use for color
-        fig_4.update_layout(width=800, height=650, title_x=0.2, title_y=1)
-        st.plotly_chart(fig_4, use_container_width=True)
-
-    with col2:
-        profit_line = alt.Chart(filtered_df[filtered_df['order_year']==CURR_YEAR]).mark_line().encode(
-        alt.X('order_date', title='order date', timeUnit=timeUnit[freq]),
-        alt.Y('sales', title='Revenue', aggregate='sum')
-        ).properties(
-            width=500,  # Sesuaikan dengan lebar yang diinginkan
-            height=600,
-            title=f'Time Series Region: {region_name} ({CURR_YEAR})'
-        ).configure_title(
-            anchor='middle'
-        )
-        st.altair_chart(profit_line, use_container_width=True)
-
-if selected == "Customer Segmentation":
+    # Display the chart with title
+    chart_with_title = dual_axis.properties(width=600, height=600, title=title_params)
+    st.altair_chart(chart_with_title, use_container_width=True)
+  
+elif selected == "Customer Segmentation":
 
     filtered_df = df[(df['order_year'] == CURR_YEAR)]
     best_customer = pd.pivot_table(
@@ -459,7 +485,7 @@ if selected == "Customer Segmentation":
         except Exception as e:
             st.error(f'Error: {e}')
 
-if selected == "Product Analysis":
+elif selected == "Product Analysis":
     st.header("Product Anaysis")
 
     freq = st.selectbox("Freq", ['Harian','Mingguan','Quartal','Bulanan'])
@@ -590,3 +616,5 @@ if selected == "Product Analysis":
     # Atur margin container untuk memusatkan tabel
     with container:
         st.dataframe(styled_pivot_table, width=1000, height=1000)
+
+# elif selected == "Predictive Analysis":
