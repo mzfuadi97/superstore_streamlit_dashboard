@@ -14,6 +14,9 @@ import itertools
 import statsmodels.api as sm
 import warnings
 from plotly.subplots import make_subplots
+from st_functions import st_button, load_css
+from PIL import Image
+
 warnings.filterwarnings('ignore')
 
 st.set_page_config(layout='wide')
@@ -667,7 +670,7 @@ elif selected == "Predictive Analysis":
         st.subheader("SARIMA Parameter")
         best_params = {'Furniture': {'p': 0, 'd': 1, 'q': 1, 'P': 0, 'D': 1, 'Q': 1, 's': 12, 'AIC': 251.24707755083713},
                'Office Supplies': {'p': 0, 'd': 1, 'q': 1, 'P': 0, 'D': 1, 'Q': 1, 's': 12, 'AIC': 231.55283799226925},
-               'valuenology': {'p': 1, 'd': 1, 'q': 1, 'P': 1, 'D': 1, 'Q': 1, 's': 12, 'AIC': 294.1604201223718}}
+               'Technology': {'p': 1, 'd': 1, 'q': 1, 'P': 1, 'D': 1, 'Q': 1, 's': 12, 'AIC': 294.1604201223718}}
 
         # Streamlit selectbox to choose category
 
@@ -708,12 +711,19 @@ elif selected == "Predictive Analysis":
 
 
         st.subheader(f"Predict {selected_cat} Sales")
-        forecast_horizon_years = st.selectbox("Select forecast horizon (in years)", [1, 2, 3])
+        forecast_period = st.selectbox("Select forecast period", ['1 year', '2 years', '3 years'])
 
-        # Calculate steps based on the selected forecast horizon
-        steps = forecast_horizon_years * 12
+        # Convert selected period to steps
+        if forecast_period == '1 year':
+            steps = 12
+        elif forecast_period == '2 years':
+            steps = 24
+        elif forecast_period == '3 years':
+            steps = 36
+        else:
+            st.error("Invalid forecast period selected. Please choose 1 year, 2 years, or 3 years.")
 
-        # Get forecast and confidence interval
+        # Get forecast values and confidence interval
         pred_uc_value = results_value.get_forecast(steps=steps)
         pred_ci_value = pred_uc_value.conf_int()
 
@@ -731,4 +741,16 @@ elif selected == "Predictive Analysis":
         # Display the plot in Streamlit
         st.pyplot(fig, use_container_width=True)
             
-        
+elif selected == "Contact Us":
+        load_css()
+        col1, col2, col3 = st.columns(3)
+        col2.image(Image.open('dp.png'))
+
+        st.header('Muhammad Zaki Fuadi')
+
+        st.info('Professional Data (Analyst, Engineer, Science)')
+
+        icon_size = 20
+
+
+        st_button('linkedin', 'https://www.linkedin.com/in/mzfuadi97/', 'Follow me on LinkedIn', icon_size)
