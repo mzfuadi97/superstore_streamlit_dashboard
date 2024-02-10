@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from streamlit_option_menu import option_menu
 # from numerize import numerize
@@ -9,6 +10,11 @@ import plotly.express as px
 import pandasql as ps
 import geopandas as gpd
 import json
+import itertools
+import statsmodels.api as sm
+import warnings
+from plotly.subplots import make_subplots
+warnings.filterwarnings('ignore')
 
 st.set_page_config(layout='wide')
 
@@ -617,4 +623,112 @@ elif selected == "Product Analysis":
     with container:
         st.dataframe(styled_pivot_table, width=1000, height=1000)
 
-# elif selected == "Predictive Analysis":
+elif selected == "Predictive Analysis":
+        st.header("Predict Time Series Category Sales")
+        selected_cat = st.selectbox("Select Category", df['category'].unique())
+
+        filtered_df = df[(df['category'] == selected_cat)]
+        filtered_df = filtered_df[['order_date','sales']]
+
+        filtered_df['order_date'] = pd.to_datetime(filtered_df['order_date'])
+        filtered_df = filtered_df.sort_values('order_date')
+        filtered_df = filtered_df.set_index('order_date')
+
+        value_y = filtered_df['sales'].resample('MS').mean()
+
+        decomposition_value= sm.tsa.seasonal_decompose(value_y,model='additive')
+        # Create plotly figure
+        fig_names = ['Observed', 'Trend', 'Seasonal', 'Residual']
+        decomposition_values = [decomposition_value.observed, decomposition_value.trend, decomposition_value.seasonal, decomposition_value.resid]
+        st.subheader("Decomposition Plot")
+    
+        fig = make_subplots(rows=2, cols=2, subplot_titles=fig_names)
+
+        # Loop through each figure type
+        for i, (fig_name, values) in enumerate(zip(fig_names, decomposition_values), start=1):
+            # Calculate row and col indices
+            row_idx, col_idx = divmod(i - 1, 2)  # Subtract 1 to start index from 0
+
+            # Add trace to subplot
+            fig.add_trace(go.Scatter(x=values.index, y=values, mode='lines' if fig_name != 'Residual' else 'markers',
+                                    marker=dict(size=5, color='red') if fig_name == 'Residual' else None, name=fig_name),
+                        row=row_idx + 1, col=col_idx + 1)
+
+            # Update layout
+            fig.update_xaxes(title_text='Date', row=row_idx + 1, col=col_idx + 1)
+            fig.update_yaxes(title_text='Sales', row=row_idx + 1, col=col_idx + 1, type='log' if fig_name == 'Residual' else None)
+
+        # Update overall layout
+        fig.update_layout(height=600, width=800, showlegend=False)
+
+        # Display plotly figure
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("SARIMA Parameter")
+        best_params = {'Furniture': {'p': 0, 'd': 1, 'q': 1, 'P': 0, 'D': 1, 'Q': 1, 's': 12, 'AIC': 251.24707755083713},
+               'Office Supplies': {'p': 0, 'd': 1, 'q': 1, 'P': 0, 'D': 1, 'Q': 1, 's': 12, 'AIC': 231.55283799226925},
+               'valuenology': {'p': 1, 'd': 1, 'q': 1, 'P': 1, 'D': 1, 'Q': 1, 's': 12, 'AIC': 294.1604201223718}}
+
+        # Streamlit selectbox to choose category
+
+        # Display the best parameters for the selected category
+        if selected_cat in best_params:
+            best_param_values = best_params[selected_cat]
+            st.write(f"Best parameters for {selected_cat}: {best_param_values}")
+
+            # Extracting parameters
+            p, d, q, P, D, Q, s = best_param_values['p'], best_param_values['d'], best_param_values['q'], \
+                                best_param_values['P'], best_param_values['D'], best_param_values['Q'], best_param_values['s']
+
+            # Assuming value_y is defined earlier
+            mod_value = sm.tsa.statespace.SARIMAX(value_y,
+                                                order=(p, d, q),
+                                                seasonal_order=(P, D, Q, s),
+                                                enforce_stationarity=False,
+                                                enforce_invertibility=False)
+
+            results_value = mod_value.fit()
+
+            # Now you can use 'results_value' for further analysis or predictions
+            st.write("SARIMAX Model Results:")
+            st.write(results_value.summary())
+        else:
+            st.write("Invalid category selected.")
+
+        results_value = mod_value.fit()
+        pred_value = results_value.get_prediction(start = pd.to_datetime('2017-01-01'), dynamic = False)
+        pred_ci_value = pred_value.conf_int()
+        value_forecasted = pred_value.predicted_mean
+        value_truth = value_y['2017-01-01':]
+        mse = ((value_forecasted - value_truth) ** 2).mean()
+        rmse = mse**0.5
+        st.subheader("Model Evaluations")
+        st.write('MSE of forecast :{}'.format(round(mse,2)))
+        st.write('RMSE of forecast :{}'.format(round(rmse,2)))
+
+
+        st.subheader(f"Predict {selected_cat} Sales")
+        forecast_horizon_years = st.selectbox("Select forecast horizon (in years)", [1, 2, 3])
+
+        # Calculate steps based on the selected forecast horizon
+        steps = forecast_horizon_years * 12
+
+        # Get forecast and confidence interval
+        pred_uc_value = results_value.get_forecast(steps=steps)
+        pred_ci_value = pred_uc_value.conf_int()
+
+        # Plotting the forecast
+        fig, ax = plt.subplots(figsize=(10, 8))
+        value_y.plot(ax=ax, label='observed')
+        pred_uc_value.predicted_mean.plot(ax=ax, label='Forecast')
+        ax.fill_between(pred_ci_value.index,
+                        pred_ci_value.iloc[:, 0],
+                        pred_ci_value.iloc[:, 1], color='k', alpha=0.6)
+        ax.set_xlabel('Date')
+        ax.set_ylabel(f'{selected_cat} Sales')
+        plt.legend()
+
+        # Display the plot in Streamlit
+        st.pyplot(fig, use_container_width=True)
+            
+        
