@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
-import matplotlib.pyplot as plt
+import matplotlib as plt
 import plotly.graph_objects as go
 from streamlit_option_menu import option_menu
 # from numerize import numerize
