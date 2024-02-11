@@ -10,7 +10,6 @@ import plotly.express as px
 import pandasql as ps
 import geopandas as gpd
 import json
-import itertools
 import statsmodels.api as sm
 import warnings
 from plotly.subplots import make_subplots
@@ -399,20 +398,20 @@ elif selected == "Customer Segmentation":
     st.plotly_chart(fig_best_cust, use_container_width=True)
 
 
-    filtered_df = df[(df['order_year'] == CURR_YEAR)]
+    # filtered_df = df[(df['order_year'] == CURR_YEAR)]
     # Calculating recency
-    recency_df = filtered_df.groupby('customer_name', as_index=False)['order_date'].max()
+    recency_df = df.groupby('customer_name', as_index=False)['order_date'].max()
     recent_date = recency_df['order_date'].max()
     recency_df['Recency'] = recency_df['order_date'].apply(
     lambda x: (recent_date - x).days)
     recency_df.rename(columns={'order_date':'Last Purchase Date'}, inplace=True)
 
     # Calculating Frequency
-    frequency_df = filtered_df.groupby('customer_name', as_index=False)['order_date'].count()
+    frequency_df = df.groupby('customer_name', as_index=False)['order_date'].count()
     frequency_df.rename(columns={'order_date':'Frequency'}, inplace=True)
 
     # Calculating monetary
-    monetary_df = filtered_df.groupby('customer_name', as_index=False)['sales'].sum()
+    monetary_df = df.groupby('customer_name', as_index=False)['sales'].sum()
     monetary_df.rename(columns={'sales':'Monetary'}, inplace=True)
 
     # Merging all three df in one df
@@ -446,6 +445,8 @@ elif selected == "Customer Segmentation":
     low_value_mask = ((rank_df['rfm_score']<3) & (rank_df['rfm_score']>=1.6))
     lost_mask = (rank_df['rfm_score'] < 1.6)
 
+    colors = ['#3C0753', '#F0F3FF','#910A67', '#720455', '#030637']
+
     rank_df.loc[top_customer_mask, 'Customer Segment'] = 'Top Customer'
     rank_df.loc[high_value_mask, 'Customer Segment'] = 'High Value Customer'
     rank_df.loc[medium_value_mask, 'Customer Segment'] = 'Medium Value Customer'
@@ -453,23 +454,26 @@ elif selected == "Customer Segmentation":
     rank_df.loc[lost_mask, 'Customer Segment'] = 'Lost Customer'
 
     group_rfm_customer = pd.pivot_table(
-    data=rank_df,
-    index='Customer Segment',
-    values='rfm_score',
-    aggfunc='mean'
+        data=rank_df,
+        index='Customer Segment',
+        values='rfm_score',
+        aggfunc='mean'
     ).reset_index()
     group_rfm_customer['rfm_score'] = group_rfm_customer['rfm_score'].round(2)
-    
 
     st.subheader("RFM Segmentation")
     fig_cust_rfm = px.pie(group_rfm_customer, values="rfm_score",
-                     names="Customer Segment",
-                     title='Customer Segments')
+                        names="Customer Segment",
+                        title='Customer Segments')
 
-    # Update chart to display values
-    fig_cust_rfm.update_traces(textinfo='percent+label', text=rank_df['Customer Segment'].value_counts().values)
+    # Update chart to display values and set colors
+    fig_cust_rfm.update_traces(
+        textinfo='percent+label',
+        text=rank_df['Customer Segment'].value_counts().values,
+        marker=dict(colors=colors)
+    )
 
-    # Optional: Add a title to the layout
+# Optional: Add a title to the layout
     fig_cust_rfm.update_layout(title='Customer Segment Distribution')
 
     # Display the plot using st.plotly_chart()
@@ -514,7 +518,7 @@ elif selected == "Product Analysis":
 
     color_discrete_map = {category: color for category, color in zip(categories, fixed_colors)}
     color_scale = alt.Scale(domain=categories, range=fixed_colors)
-
+    
     st.subheader("Profit Distribution by Sub Category")
     profit_bar = alt.Chart(df[df['order_year'] == CURR_YEAR]).mark_bar().encode(
     alt.X('order_date', title='Order Date', timeUnit=timeUnit[freq]),
@@ -726,6 +730,11 @@ elif selected == "Predictive Analysis":
         # Get forecast values and confidence interval
         pred_uc_value = results_value.get_forecast(steps=steps)
         pred_ci_value = pred_uc_value.conf_int()
+
+        total_sales_forecasted = pred_uc_value.predicted_mean.sum()
+
+# Menampilkan total penjualan dalam periode yang dipilih
+        st.write(f"Total sales forecasted for the selected period: {round(total_sales_forecasted, 2)}")
 
         # Plotting the forecast
         fig, ax = plt.subplots(figsize=(10, 8))
