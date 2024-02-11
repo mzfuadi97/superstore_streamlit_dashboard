@@ -8,7 +8,6 @@ from streamlit_option_menu import option_menu
 # from numerize import numerize
 import plotly.express as px
 import pandasql as ps
-import geopandas as gpd
 import json
 import statsmodels.api as sm
 import warnings
