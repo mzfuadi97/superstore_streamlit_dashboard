@@ -1,6 +1,6 @@
 altair
 geopandas
-matplotlib
+matplotlib==3.5.2
 numpy
 pandas
 pandasql
