@@ -317,7 +317,7 @@ elif selected == "Geography Insight":
             mapbox_style="carto-positron",
             mapbox_zoom=3.5,
             mapbox_center={"lat": center_lat , "lon": center_lon},
-            width=700,
+            width=600,
             height=600,
         )
         fig.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
